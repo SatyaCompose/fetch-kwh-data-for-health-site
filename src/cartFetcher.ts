@@ -4,6 +4,25 @@ import { Customer, Order } from "@commercetools/platform-sdk";
 
 dotenv.config();
 
+type MetricMode =
+    | "CART_TOTAL"
+    | "ANONYMOUS_CART"
+    | "LOGGED_IN_CART"
+    | "FIRST_TIME_BUYERS";
+
+const metricMap: Record<
+    MetricMode,
+    (from: string, to: string) => Promise<number>
+> = {
+    CART_TOTAL: fetchCartTotal,
+    ANONYMOUS_CART: fetchAnonymousCartTotal,
+    LOGGED_IN_CART: fetchLoggedInCartTotal,
+    FIRST_TIME_BUYERS: async (from, to) => {
+        const orders = await fetchFirstTimeBuyersTotal(from, to);
+        return fetchOrderByEmail(orders);
+    }
+};
+
 const {
     CT_PROJECT_KEY,
     CT_CLIENT_ID,
@@ -91,7 +110,37 @@ async function fetchCartTotal(from: string, to: string): Promise<number> {
     const query = `
         query {
             carts(
+                where: "lastModifiedAt > \\"${from}\\" AND lastModifiedAt < \\"${to}\\" AND store(key=\\"kwh\\") AND lineItems is defined"
+            ) {
+                total
+            }
+        }
+    `;
+
+    const res = await executeGraphQL(query);
+    return res?.data?.carts?.total ?? 0;
+}
+
+export async function fetchAnonymousCartTotal(from: string, to: string): Promise<number> {
+    const query = `
+        query {
+            carts(
                 where: "(customerId is not defined) AND lastModifiedAt > \\"${from}\\" AND lastModifiedAt < \\"${to}\\" AND store(key=\\"kwh\\") AND lineItems is defined"
+            ) {
+                total
+            }
+        }
+    `;
+
+    const res = await executeGraphQL(query);
+    return res?.data?.carts?.total ?? 0;
+}
+
+export async function fetchLoggedInCartTotal(from: string, to: string): Promise<number> {
+    const query = `
+        query {
+            carts(
+                where: "(customerId is defined) AND lastModifiedAt > \\"${from}\\" AND lastModifiedAt < \\"${to}\\" AND store(key=\\"kwh\\") AND lineItems is defined"
             ) {
                 total
             }
@@ -130,7 +179,7 @@ export async function fetchLoggedInOrderTotal(from: string, to: string): Promise
 
     const res = await executeGraphQL(query);
     return res?.data?.orders?.total ?? 0;
-} 
+}
 
 export async function fetchAnonymousOrderTotal(from: string, to: string): Promise<number> {
     const query = `
@@ -211,7 +260,7 @@ export async function fetchFirstTimeBuyersTotal(from: string, to: string): Promi
                 }
             }
         }
-    `; 
+    `;
     const res = await executeGraphQL(ordersQuery);
     const ordersDetails = res?.data?.orders?.results ?? [];
     return ordersDetails;
@@ -244,47 +293,53 @@ export const fetchOrderByEmail = async (orderDetails: Order[]) => {
     return count
 }
 
-export async function fetchHourlyCartTotal(from: string, to: string): Promise<number> {
+export async function fetchHourlyCartTotal(
+    from: string,
+    to: string,
+    mode: MetricMode
+): Promise<number> {
     try {
-        // First, try fetching the full hour
-        const total = await fetchCartTotal(from, to);
-        
-        if (total < 10000) {
-            return total;
-        }
-
-        //ORDER: Fetch OrderByEmail
-        // const orders = await fetchFirstTimeBuyersTotal(from, to);
-        // let total = 0;
-        // // If total is <= 10000, return it
-        // if (orders?.length < 10000) {
-        //     total = await fetchOrderByEmail(orders);
-        //     return total;
-        // }
-
-        console.log(`Total ${total} exceeds 10000, splitting into 30-min intervals`);
-
-        // Split into two 30-minute intervals
-        const fromDate = new Date(from);
-        const toDate = new Date(to);
-
-        // Calculate midpoint (30 minutes from start)
-        const midpoint = new Date(fromDate.getTime() + 30 * 60 * 1000);
-
-        // Fetch both 30-minute intervals
-        const [firstHalfTotal, secondHalfTotal] = await Promise.all([
-            fetchCartTotal(from, midpoint.toISOString()),
-            fetchCartTotal(midpoint.toISOString(), to)
-        ]);
-
-        const combinedTotal = firstHalfTotal + secondHalfTotal;
-
-        console.log(`30-min intervals: ${firstHalfTotal} + ${secondHalfTotal} = ${combinedTotal}`);
-
-        return combinedTotal;
-
+        return await executeMetric(mode, from, to);
     } catch (error) {
-        console.error("Failed to fetch cart total:", error);
+        console.error("Failed to fetch total:", error);
         throw error;
     }
+}
+
+
+async function executeMetric(
+    mode: MetricMode,
+    from: string,
+    to: string
+): Promise<number> {
+
+    const metricFn = metricMap[mode];
+
+    if (!metricFn) {
+        throw new Error(`Unsupported metric mode: ${mode}`);
+    }
+
+    const total = await metricFn(from, to);
+
+    if (total < 10000) {
+        return total;
+    }
+
+    console.log(`Total ${total} exceeds 10000, splitting into 30-min intervals`);
+
+    const fromDate = new Date(from);
+    const midpoint = new Date(fromDate.getTime() + 30 * 60 * 1000);
+
+    const [firstHalfTotal, secondHalfTotal] = await Promise.all([
+        metricFn(from, midpoint.toISOString()),
+        metricFn(midpoint.toISOString(), to)
+    ]);
+
+    const combinedTotal = firstHalfTotal + secondHalfTotal;
+
+    console.log(
+        `30-min intervals: ${firstHalfTotal} + ${secondHalfTotal} = ${combinedTotal}`
+    );
+
+    return combinedTotal;
 }

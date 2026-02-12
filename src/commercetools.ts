@@ -1,7 +1,7 @@
 import fetch from "node-fetch";
 import dotenv from "dotenv";
 
-dotenv.config(); // 👈 THIS LINE IS REQUIRED
+dotenv.config();
 
 const {
     CT_PROJECT_KEY,
@@ -32,14 +32,13 @@ export async function getAccessToken() {
             Authorization:
                 "Basic " +
                 Buffer.from(`${CT_CLIENT_ID}:${CT_CLIENT_SECRET}`).toString("base64"),
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/x-www-form-urlenc-----------------oded",
         },
         body: "grant_type=client_credentials",
     });
 
     const data = await res.json();
     accessToken = data.access_token;
-    console.log("ACCESS", accessToken)
     return accessToken;
 }
 
@@ -57,6 +56,5 @@ export async function executeGraphQL(query: string) {
             body: JSON.stringify({ query }),
         }
     );
-    console.log("RES", res)
     return res.json();
 }

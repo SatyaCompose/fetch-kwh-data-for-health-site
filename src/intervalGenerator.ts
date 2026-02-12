@@ -1,6 +1,7 @@
 export function generateHourlyIntervals(
     startISO: string,
-    endISO: string
+    endISO: string,
+    hours: number
 ) {
     const intervals: Array<{ from: string; to: string }> = [];
 
@@ -9,7 +10,7 @@ export function generateHourlyIntervals(
 
     while (cursor < end) {
         const next = new Date(cursor);
-        next.setHours(next.getHours() + 4);
+        next.setHours(next.getHours() + hours);
 
         intervals.push({
             from: cursor.toISOString(),
