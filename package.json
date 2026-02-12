@@ -1,0 +1,25 @@
+{
+  "name": "cart-hourly-fetcher",
+  "version": "1.0.0",
+  "description": "Fetch hourly anonymous carts from commercetools and aggregate totals",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "@commercetools/platform-sdk": "^8.23.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^2.6.12"
+  },
+  "devDependencies": {
+    "@commercetools/sdk-auth": "^5.0.1",
+    "@commercetools/sdk-types": "^1.0.1",
+    "@types/node": "^20.11.30",
+    "@types/node-fetch": "^2.6.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
