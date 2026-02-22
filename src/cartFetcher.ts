@@ -227,19 +227,20 @@ export async function fetchRepeatedCustOrderTotal(
 
   do {
     const query = `
-            query {
-                orders(
-                    limit: ${LIMIT}
-                    offset: ${offset}
-                    where: "createdAt > \\"${from}\\" AND createdAt < \\"${to}\\" AND store(key=\\"kwh\\")"
-                ) {
-                    total
-                    results {
-                        customerEmail
-                    }
+        query {
+            orders(
+                limit: ${LIMIT}
+                offset: ${offset}
+                sort: ["createdAt asc"]
+                where: "createdAt > \\"${from}\\" AND createdAt < \\"${to}\\" AND store(key=\\"kwh\\")"
+            ) {
+                total
+                results {
+                    customerEmail
                 }
             }
-        `;
+        }
+    `;
 
     const res = await executeGraphQL(query);
     const orders: Order[] = res?.data?.orders?.results ?? [];
