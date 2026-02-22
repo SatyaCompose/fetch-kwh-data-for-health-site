@@ -253,12 +253,10 @@ export async function fetchRepeatedCustOrderTotal(
     for (const o of orders) {
       const email = o?.customerEmail;
       if (!email) continue;
-      console.log(`Processing order with email: ${email}`);
       if (seen.has(email)) {
         console.log(`Repeated email found: ${email}`);
         repeated.add(email);
       } else {
-        console.log(`First time seeing email: ${email}`);
         seen.add(email);
       }
     }
