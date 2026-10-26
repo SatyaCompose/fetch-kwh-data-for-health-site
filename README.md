@@ -46,6 +46,7 @@ src/
 * GraphQL error handling
 * Dynamic metric execution via `MODE`
 * Hourly / custom interval batching
+* Paginated counting (limit/offset + date cursor) so counts are never capped at 10,000
 * Automatic 30-minute splitting if results exceed 10,000
 * Repeated customer detection
 * First-time buyer detection
@@ -163,6 +164,20 @@ For interval-based metrics:
    * Totals combined.
 
 This protects against Commercetools GraphQL total limits.
+
+---
+
+# 📄 Paginated Counting
+
+Commercetools caps the `total` field at **10,000** and rejects `offset` above **10,000**.
+Every count query therefore pages through results instead of trusting `total`:
+
+1. Fetch pages of 500, sorted by the date field (`createdAt` for orders and customers, `lastModifiedAt` for carts).
+2. When the next page would pass offset 10,000, move the date cursor to the last row's date (`>=`), reset offset to 0 and continue.
+3. Rows are de-duplicated by `id`, so the `>=` overlap never double counts.
+4. If a cursor reset would not advance the date, the run stops with an error rather than looping forever.
+
+This applies to all order, customer and cart counts, repeated customer detection and first-time buyer order collection.
 
 ---
 

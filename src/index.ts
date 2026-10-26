@@ -1,8 +1,8 @@
 import { MetricMode, runMetric } from "./runAllMetrics";
 
 async function runHealthDataJob() {
-    const START_DATE = "2026-02-02T00:00:00.000Z";
-    const END_DATE = "2026-02-08T23:59:00.000Z";
+    const START_DATE = "2026-10-19T00:00:00.000Z";
+    const END_DATE = "2026-10-25T23:59:00.000Z";
     const MODE = process.env.MODE as MetricMode;
 
     const total = await runMetric(MODE, START_DATE, END_DATE);

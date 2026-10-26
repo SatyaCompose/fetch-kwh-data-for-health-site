@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 import dotenv from "dotenv";
-import { Customer, Order } from "@commercetools/platform-sdk";
+import { Order } from "@commercetools/platform-sdk";
 
 dotenv.config();
 
@@ -109,204 +109,217 @@ export async function executeGraphQL(query: string) {
 }
 
 async function fetchCartTotal(from: string, to: string): Promise<number> {
-  const query = `
-        query {
-            carts(
-                where: "lastModifiedAt > \\"${from}\\" AND lastModifiedAt < \\"${to}\\" AND store(key=\\"kwh\\") AND lineItems is defined"
-            ) {
-                total
-            }
-        }
-    `;
-
-  const res = await executeGraphQL(query);
-  return res?.data?.carts?.total ?? 0;
+  return countPaginated(
+    "carts",
+    `store(key=\\"kwh\\") AND lineItems is defined`,
+    from,
+    to,
+    "lastModifiedAt"
+  );
 }
 
 export async function fetchAnonymousCartTotal(
   from: string,
   to: string
 ): Promise<number> {
-  const query = `
-        query {
-            carts(
-                where: "(customerId is not defined) AND lastModifiedAt > \\"${from}\\" AND lastModifiedAt < \\"${to}\\" AND store(key=\\"kwh\\") AND lineItems is defined"
-            ) {
-                total
-            }
-        }
-    `;
-
-  const res = await executeGraphQL(query);
-  return res?.data?.carts?.total ?? 0;
+  return countPaginated(
+    "carts",
+    `(customerId is not defined) AND store(key=\\"kwh\\") AND lineItems is defined`,
+    from,
+    to,
+    "lastModifiedAt"
+  );
 }
 
 export async function fetchLoggedInCartTotal(
   from: string,
   to: string
 ): Promise<number> {
-  const query = `
-        query {
-            carts(
-                where: "(customerId is defined) AND lastModifiedAt > \\"${from}\\" AND lastModifiedAt < \\"${to}\\" AND store(key=\\"kwh\\") AND lineItems is defined"
-            ) {
-                total
-            }
-        }
-    `;
-
-  const res = await executeGraphQL(query);
-  return res?.data?.carts?.total ?? 0;
+  return countPaginated(
+    "carts",
+    `(customerId is defined) AND store(key=\\"kwh\\") AND lineItems is defined`,
+    from,
+    to,
+    "lastModifiedAt"
+  );
 }
 
 export async function fetchOrderTotal(
   from: string,
   to: string
 ): Promise<number> {
-  const query = `
-        query {
-            orders(
-                where: "createdAt > \\"${from}\\" AND createdAt < \\"${to}\\" AND store(key=\\"kwh\\")"
-            ) {
-                total
-            }
-        }
-    `;
-
-  const res = await executeGraphQL(query);
-  return res?.data?.orders?.total ?? 0;
+  return countPaginated("orders", `store(key=\\"kwh\\")`, from, to);
 }
 
 export async function fetchLoggedInOrderTotal(
   from: string,
   to: string
 ): Promise<number> {
-  const query = `
-        query {
-            orders(
-                where: "(customerId is defined) AND createdAt > \\"${from}\\" AND createdAt < \\"${to}\\" AND store(key=\\"kwh\\")"
-            ) {
-                total
-            }
-        }
-    `;
-
-  const res = await executeGraphQL(query);
-  return res?.data?.orders?.total ?? 0;
+  return countPaginated(
+    "orders",
+    `(customerId is defined) AND (anonymousId is not defined) AND store(key=\\"kwh\\")`,
+    from,
+    to
+  );
 }
 
 export async function fetchAnonymousOrderTotal(
   from: string,
   to: string
 ): Promise<number> {
-  const query = `
-        query {
-            orders(
-                where: "(customerId is not defined) AND createdAt > \\"${from}\\" AND createdAt < \\"${to}\\" AND store(key=\\"kwh\\")"
-            ) {
-                total
-            }
-        }
-    `;
-
-  const res = await executeGraphQL(query);
-  return res?.data?.orders?.total ?? 0;
+  return countPaginated(
+    "orders",
+    `(anonymousId is defined) AND store(key=\\"kwh\\")`,
+    from,
+    to
+  );
 }
 
 export async function fetchRepeatedCustOrderTotal(
   from: string,
   to: string
 ): Promise<number> {
-  const LIMIT = 500;
-  let offset = 0;
-  let fetchedCount = 0;
-  let totalCount = Infinity;
-
   const seen = new Set<string>();
   const repeated = new Set<string>();
 
-  do {
+  await forEachPaginated<{ id: string; customerEmail?: string | null }>(
+    "orders",
+    `store(key=\\"kwh\\")`,
+    from,
+    to,
+    "createdAt",
+    "customerEmail",
+    (o) => {
+      const email = o?.customerEmail;
+      if (!email) return;
+      if (seen.has(email)) {
+        console.log(`Repeated email found: ${email} => ${repeated.size + 1} repeated so far`);
+        repeated.add(email);
+      } else {
+        seen.add(email);
+      }
+    }
+  );
+
+  const uniqueRepeatedCustomers = [...repeated];
+  console.log(`Repeated customers found: ${uniqueRepeatedCustomers.length}`);
+  return uniqueRepeatedCustomers.length;
+}
+
+type PaginatedResource = "customers" | "orders" | "carts";
+type DateField = "createdAt" | "lastModifiedAt";
+
+// Calls onRow once per unique row (by id) in the (from, to) range.
+async function forEachPaginated<T extends { id: string }>(
+  resource: PaginatedResource,
+  baseWhere: string,
+  from: string,
+  to: string,
+  dateField: DateField,
+  selection: string,
+  onRow: (row: T) => void
+): Promise<void> {
+  const LIMIT = 500;
+  // Commercetools rejects offset above 10,000, so we page by offset and then
+  // slide the date cursor forward instead of trusting the capped total.
+  const MAX_OFFSET = 10000;
+  let offset = 0;
+  let cursorFrom = from;
+  let cursorOperator = ">";
+
+  const seenIds = new Set<string>();
+
+  while (true) {
     const query = `
         query {
-            orders(
+            ${resource}(
                 limit: ${LIMIT}
                 offset: ${offset}
-                sort: ["createdAt asc"]
-                where: "createdAt > \\"${from}\\" AND createdAt < \\"${to}\\" AND store(key=\\"kwh\\")"
+                sort: ["${dateField} asc"]
+                where: "${baseWhere} AND ${dateField} ${cursorOperator} \\"${cursorFrom}\\" AND ${dateField} < \\"${to}\\""
             ) {
                 total
                 results {
-                    customerEmail
+                    id
+                    ${dateField}
+                    ${selection}
                 }
             }
         }
     `;
 
     const res = await executeGraphQL(query);
-    const orders: Order[] = res?.data?.orders?.results ?? [];
-    totalCount = res?.data?.orders?.total ?? 0;
+    const results: (T & Record<string, any>)[] =
+      res?.data?.[resource]?.results ?? [];
 
-    console.log(
-      `Fetched ${orders.length} orders (offset: ${offset}, total: ${totalCount})`
-    );
-
-    for (const o of orders) {
-      const email = o?.customerEmail;
-      if (!email) continue;
-      if (seen.has(email)) {
-        console.log(`Repeated email found: ${email} => ${repeated?.size + 1} repeated so far`);
-        repeated.add(email);
-      } else {
-        seen.add(email);
-      }
+    for (const r of results) {
+      if (seenIds.has(r.id)) continue;
+      seenIds.add(r.id);
+      onRow(r);
     }
 
-    fetchedCount += orders.length;
+    console.log(
+      `Fetched ${results.length} ${resource} (offset: ${offset}, cursorFrom: ${cursorFrom}, unique total: ${seenIds.size})`
+    );
+
+    if (results.length === 0) break;
+
     offset += LIMIT;
-  } while (fetchedCount < totalCount);
-  const uniqueRepeatedCustomers = [...repeated];
-  console.log(`Repeated customers found: ${uniqueRepeatedCustomers?.length}`);
-  return uniqueRepeatedCustomers.length;
+
+    if (results.length === LIMIT && offset + LIMIT > MAX_OFFSET) {
+      const lastDate: string = results[results.length - 1][dateField];
+      if (lastDate === cursorFrom) {
+        throw new Error(
+          `Pagination cannot advance for ${resource}: cursor stuck at ${cursorFrom}`
+        );
+      }
+      // ">=" keeps records sharing the last date; seenIds dedupes them.
+      cursorFrom = lastDate;
+      cursorOperator = ">=";
+      offset = 0;
+      console.log(`Cursor reset for ${resource} (cursorFrom: ${cursorFrom})`);
+    }
+  }
+}
+
+async function countPaginated(
+  resource: PaginatedResource,
+  baseWhere: string,
+  from: string,
+  to: string,
+  dateField: DateField = "createdAt"
+): Promise<number> {
+  let count = 0;
+  await forEachPaginated(resource, baseWhere, from, to, dateField, "", () => {
+    count++;
+  });
+  return count;
 }
 
 export async function fetchCustomersCreatedTotal(
   from: string,
   to: string
 ): Promise<number> {
-  const query = `
-        query {
-            customers(
-                where: "stores(key=\\"kwh\\") AND createdAt > \\"${from}\\" AND createdAt < \\"${to}\\""
-            ) {
-                total
-            }
-        }
-    `;
-  console.log("Fetching customers created total with query:", query);
-  const res = await executeGraphQL(query);
-
-  return res?.data?.customers?.total ?? 0;
+  return countPaginated("customers", `stores(key=\\"kwh\\")`, from, to);
 }
 
 export async function fetchFirstTimeBuyersTotal(
   from: string,
   to: string
 ): Promise<Order[]> {
-  const ordersQuery = `
-        query {
-            orders(
-                where: "createdAt > \\"${from}\\" AND createdAt < \\"${to}\\" AND store(key=\\"kwh\\")"
-            ) {
-                total
-                results{
-                    customerEmail
-                }
-            }
-        }
-    `;
-  const res = await executeGraphQL(ordersQuery);
-  const ordersDetails = res?.data?.orders?.results ?? [];
-  return ordersDetails;
+  const orders: Order[] = [];
+  await forEachPaginated<Order>(
+    "orders",
+    `store(key=\\"kwh\\")`,
+    from,
+    to,
+    "createdAt",
+    "customerEmail",
+    (row) => {
+      orders.push({ customerEmail: row.customerEmail } as Order);
+    }
+  );
+  return orders;
 }
 
 export const fetchOrderByEmail = async (orderDetails: Order[]) => {
