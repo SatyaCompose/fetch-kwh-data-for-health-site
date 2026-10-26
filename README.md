@@ -69,7 +69,7 @@ node -v
 
 # 🔐 Environment Variables
 
-Create a `.env` file in the root:
+If you do not already have a `.env`, copy `.env.example` to `.env` in the root and fill in the values:
 
 ```
 CT_PROJECT_KEY=
