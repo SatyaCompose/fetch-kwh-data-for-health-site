@@ -323,27 +323,40 @@ export async function fetchFirstTimeBuyersTotal(
 }
 
 export const fetchOrderByEmail = async (orderDetails: Order[]) => {
-  const orderByEmail = (email: string) => {
-    return `
-            query {
-                orders(
-                    where: "store(key=\\"kwh\\") AND customerEmail=\\"${email}\\""
-                ) {
-                    total
-                }
-            }
-    `;
-  };
+  // An email with two orders this week can never be a first-time buyer, so
+  // looking each email up once gives the same count with fewer requests.
+  const emails = [
+    ...new Set(
+      orderDetails
+        .map((o) => o?.customerEmail)
+        .filter((e): e is string => !!e)
+    ),
+  ];
+  const BATCH = 20; // aliased lookups per GraphQL request
+  const CONCURRENCY = 5; // requests in flight at once
   let count = 0;
-  for (const order of orderDetails) {
-    const query = orderByEmail(order?.customerEmail as string);
 
-    const res = await executeGraphQL(query);
-    const total = res?.data?.orders?.total ?? 0;
-    console.log(order?.customerEmail, "=> ", total);
-    if (total === 1) {
-      count++;
-    }
+  const lookupBatch = async (batch: string[]) => {
+    const fields = batch
+      .map(
+        (email, i) =>
+          `e${i}: orders(where: "store(key=\\"kwh\\") AND customerEmail=\\"${email}\\"") { total }`
+      )
+      .join(" ");
+    const res = await executeGraphQL(`query { ${fields} }`);
+    batch.forEach((email, i) => {
+      const total = res?.data?.[`e${i}`]?.total ?? 0;
+      console.log(email, "=> ", total);
+      if (total === 1) count++;
+    });
+  };
+
+  const batches: string[][] = [];
+  for (let i = 0; i < emails.length; i += BATCH) {
+    batches.push(emails.slice(i, i + BATCH));
+  }
+  for (let i = 0; i < batches.length; i += CONCURRENCY) {
+    await Promise.all(batches.slice(i, i + CONCURRENCY).map(lookupBatch));
   }
 
   return count;
